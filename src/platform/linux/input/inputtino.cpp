@@ -13,6 +13,7 @@
 #include "inputtino_mouse.h"
 #include "inputtino_pen.h"
 #include "inputtino_touch.h"
+#include "inputtino_touchpad.h"
 #include "src/config.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
@@ -69,6 +70,12 @@ namespace platf {
     platf::keyboard::unicode(raw, utf8, size);
   }
 
+  void touchpad_update(input_t &input, const touch_port_t &touch_port, const touchpad_input_t &touchpad) {
+    auto raw = (input_raw_t *) input.get();
+    BOOST_LOG(info) << "Touchpad updating";
+    platf::touchpad::update(raw, touch_port, touchpad);
+  }
+
   void touch_update(client_input_t *input, const touch_port_t &touch_port, const touch_input_t &touch) {
     auto raw = (client_input_raw_t *) input;
     platf::touch::update(raw, touch_port, touch);
@@ -113,6 +120,7 @@ namespace platf {
     platform_caps::caps_t caps = 0;
     // TODO: if has_uinput
     caps |= platform_caps::pen_touch;
+    caps |= platform_caps::touchpad;
 
     // We support controller touchpad input only when emulating the PS5 controller
     if (config::input.gamepad == "ds5"sv || config::input.gamepad == "auto"sv) {

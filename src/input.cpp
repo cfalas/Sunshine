@@ -312,6 +312,21 @@ namespace input {
       << "--end touch packet--"sv;
   }
 
+  void
+    print(PSS_TRACKPAD_PACKET packet) {
+    BOOST_LOG(warning)
+      << "--begin touchpad packet--"sv << std::endl
+      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << ']' << std::endl
+      << "pointerId ["sv << util::hex(packet->pointerId).to_string_view() << ']' << std::endl
+      << "x ["sv << from_netfloat(packet->x) << ']' << std::endl
+      << "y ["sv << from_netfloat(packet->y) << ']' << std::endl
+      << "pressureOrDistance ["sv << from_netfloat(packet->pressureOrDistance) << ']' << std::endl
+      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << ']' << std::endl
+      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << ']' << std::endl
+      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
+      << "--end touchpad packet--"sv;
+  }
+
   /**
    * @brief Prints a pen packet.
    * @param packet The pen packet.
@@ -422,6 +437,9 @@ namespace input {
         break;
       case SS_TOUCH_MAGIC:
         print((PSS_TOUCH_PACKET) payload);
+        break;
+      case SS_TRACKPAD_MAGIC:
+        print((PSS_TRACKPAD_PACKET) payload);
         break;
       case SS_PEN_MAGIC:
         print((PSS_PEN_PACKET) payload);
@@ -926,6 +944,67 @@ namespace input {
   }
 
   /**
+   * @brief Called to pass a touchpad message to the platform backend.
+   * @param input The input context pointer.
+   * @param packet The touch packet.
+   */
+  void
+    passthrough(std::shared_ptr<input_t> &input, PSS_TRACKPAD_PACKET packet) {
+    BOOST_LOG(warning) << "Passthrough touchpad packet"sv;
+    if (!config::input.mouse) {
+      BOOST_LOG(warning) << "no mouse config"sv;
+      return;
+    }
+
+    // Convert the client normalized coordinates to touchport coordinates
+    auto coords = client_to_touchport(input, {from_clamped_netfloat(packet->x, 0.0f, 1.0f) * 65535.f, from_clamped_netfloat(packet->y, 0.0f, 1.0f) * 65535.f}, {65535.f, 65535.f});
+    if (!coords) {
+      BOOST_LOG(warning) << "no coords in packet"sv;
+      return;
+    }
+
+    auto &touch_port = input->touch_port;
+    platf::touch_port_t abs_port {
+      touch_port.offset_x,
+      touch_port.offset_y,
+      touch_port.env_width,
+      touch_port.env_height
+    };
+
+    // Renormalize the coordinates
+    coords->first /= abs_port.width;
+    coords->second /= abs_port.height;
+
+    // Normalize rotation value to 0-359 degree range
+    auto rotation = util::endian::little(packet->rotation);
+    if (rotation != LI_ROT_UNKNOWN) {
+      rotation %= 360;
+    }
+
+    // Normalize the contact area based on the touchport
+    auto contact_area = scale_client_contact_area(
+      {from_clamped_netfloat(packet->contactAreaMajor, 0.0f, 1.0f) * 65535.f,
+       from_clamped_netfloat(packet->contactAreaMinor, 0.0f, 1.0f) * 65535.f},
+      rotation,
+      {abs_port.width / 65535.f, abs_port.height / 65535.f}
+    );
+
+    platf::touchpad_input_t touchpad {
+      packet->eventType,
+      rotation,
+      util::endian::little(packet->pointerId),
+      coords->first,
+      coords->second,
+      from_clamped_netfloat(packet->pressureOrDistance, 0.0f, 1.0f),
+      contact_area.first,
+      contact_area.second,
+    };
+
+    BOOST_LOG(warning) << "Updating touchpad"sv;
+    platf::touchpad_update(platf_input, abs_port, touchpad);
+  }
+
+  /**
    * @brief Called to pass a pen message to the platform backend.
    * @param input The input context pointer.
    * @param packet The pen packet.
@@ -1341,6 +1420,39 @@ namespace input {
   }
 
   /**
+   * @brief Batch two touchpad messages.
+   * @param dest The original packet to batch into.
+   * @param src A later packet to attempt to batch.
+   * @return The status of the batching operation.
+   */
+  batch_result_e
+    batch(PSS_TRACKPAD_PACKET dest, PSS_TRACKPAD_PACKET src) {
+    // Only batch hover or move events
+    if (dest->eventType != LI_TRACKPAD_EVENT_MOVE) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Don't batch beyond state changing events
+    if (src->eventType != LI_TRACKPAD_EVENT_MOVE) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Batched events must be the same pointer ID
+    if (dest->pointerId != src->pointerId) {
+      return batch_result_e::not_batchable;
+    }
+
+    // The pointer must be in the same state
+    if (dest->eventType != src->eventType) {
+      return batch_result_e::terminate_batch;
+    }
+
+    // Take the latest state
+    *dest = *src;
+    return batch_result_e::batched;
+  }
+
+  /**
    * @brief Batch two pen messages.
    * @param dest The original packet to batch into.
    * @param src A later packet to attempt to batch.
@@ -1462,6 +1574,8 @@ namespace input {
         return batch((PNV_MULTI_CONTROLLER_PACKET) dest, (PNV_MULTI_CONTROLLER_PACKET) src);
       case SS_TOUCH_MAGIC:
         return batch((PSS_TOUCH_PACKET) dest, (PSS_TOUCH_PACKET) src);
+      case SS_TRACKPAD_MAGIC:
+        return batch((PSS_TRACKPAD_PACKET) dest, (PSS_TRACKPAD_PACKET) src);
       case SS_PEN_MAGIC:
         return batch((PSS_PEN_PACKET) dest, (PSS_PEN_PACKET) src);
       case SS_CONTROLLER_TOUCH_MAGIC:
@@ -1552,6 +1666,9 @@ namespace input {
         break;
       case SS_TOUCH_MAGIC:
         passthrough(input, (PSS_TOUCH_PACKET) payload);
+        break;
+      case SS_TRACKPAD_MAGIC:
+        passthrough(input, (PSS_TRACKPAD_PACKET) payload);
         break;
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);

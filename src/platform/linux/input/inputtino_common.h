@@ -35,6 +35,12 @@ namespace platf {
           .product_id = 0xDEAD,
           .version = 0x111,
         })),
+        trackpad(inputtino::Trackpad::create({
+          .name = "Trackpad passthrough",
+          .vendor_id = 0xBEEF,
+          .product_id = 0xDEAD,
+          .version = 0x111,
+        })),
         keyboard(inputtino::Keyboard::create({
           .name = "Keyboard passthrough",
           .vendor_id = 0xBEEF,
@@ -54,6 +60,7 @@ namespace platf {
 
     // All devices are wrapped in Result because it might be that we aren't able to create them (ex: udev permission denied)
     inputtino::Result<inputtino::Mouse> mouse;
+    inputtino::Result<inputtino::Trackpad> trackpad;
     inputtino::Result<inputtino::Keyboard> keyboard;
 
     /**
