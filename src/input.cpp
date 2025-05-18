@@ -314,7 +314,7 @@ namespace input {
 
   void
     print(PSS_TRACKPAD_PACKET packet) {
-    BOOST_LOG(warning)
+    BOOST_LOG(debug)
       << "--begin touchpad packet--"sv << std::endl
       << "eventType ["sv << util::hex(packet->eventType).to_string_view() << ']' << std::endl
       << "pointerId ["sv << util::hex(packet->pointerId).to_string_view() << ']' << std::endl
@@ -950,18 +950,14 @@ namespace input {
    */
   void
     passthrough(std::shared_ptr<input_t> &input, PSS_TRACKPAD_PACKET packet) {
-    BOOST_LOG(warning) << "Passthrough touchpad packet"sv;
     if (!config::input.mouse) {
       BOOST_LOG(warning) << "no mouse config"sv;
       return;
     }
 
     // Convert the client normalized coordinates to touchport coordinates
-    auto coords = client_to_touchport(input, {from_clamped_netfloat(packet->x, 0.0f, 1.0f) * 65535.f, from_clamped_netfloat(packet->y, 0.0f, 1.0f) * 65535.f}, {65535.f, 65535.f});
-    if (!coords) {
-      BOOST_LOG(warning) << "no coords in packet"sv;
-      return;
-    }
+    float x = from_clamped_netfloat(packet->x, 0.0f, 1.0f);
+    float y = from_clamped_netfloat(packet->y, 0.0f, 1.0f);
 
     auto &touch_port = input->touch_port;
     platf::touch_port_t abs_port {
@@ -972,8 +968,6 @@ namespace input {
     };
 
     // Renormalize the coordinates
-    coords->first /= abs_port.width;
-    coords->second /= abs_port.height;
 
     // Normalize rotation value to 0-359 degree range
     auto rotation = util::endian::little(packet->rotation);
@@ -993,8 +987,8 @@ namespace input {
       packet->eventType,
       rotation,
       util::endian::little(packet->pointerId),
-      coords->first,
-      coords->second,
+      x,
+      y,
       from_clamped_netfloat(packet->pressureOrDistance, 0.0f, 1.0f),
       contact_area.first,
       contact_area.second,
@@ -1428,12 +1422,12 @@ namespace input {
   batch_result_e
     batch(PSS_TRACKPAD_PACKET dest, PSS_TRACKPAD_PACKET src) {
     // Only batch hover or move events
-    if (dest->eventType != LI_TRACKPAD_EVENT_MOVE) {
+    if (dest->eventType != LI_TRACKPAD_EVENT_FINGER_MOVE) {
       return batch_result_e::terminate_batch;
     }
 
     // Don't batch beyond state changing events
-    if (src->eventType != LI_TRACKPAD_EVENT_MOVE) {
+    if (src->eventType != LI_TRACKPAD_EVENT_FINGER_MOVE) {
       return batch_result_e::terminate_batch;
     }
 
